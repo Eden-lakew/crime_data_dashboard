@@ -776,6 +776,7 @@ function generateLayer(key, color, filterFn = null) {
         },
         pointToLayer: function (feature, latlng) {
             // Use meaningful icon for transit stations
+            // Use meaningful icon for transit stations WITH interactive spatial buffer rings
             if (datasetKey === 'transit') {
                 const transitIcon = L.divIcon({
                     html: '<div style="background-color: #10b981; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5); font-size: 14px;">🚆</div>',
@@ -783,7 +784,10 @@ function generateLayer(key, color, filterFn = null) {
                     iconSize: [24, 24],
                     iconAnchor: [12, 12]
                 });
-                return L.marker(latlng, { icon: transitIcon });
+                const marker = L.marker(latlng, { icon: transitIcon });
+                const stationName = feature.properties.STATION || 'Unknown Station';
+                marker.bindPopup(`<b>${stationName}</b>`);
+                return marker;
             }
 
             // Beautiful Street Light visualization: adjustable glow + center bulb
@@ -965,6 +969,91 @@ function generateLayer(key, color, filterFn = null) {
             layer.bindPopup(popupContent);
         }
     });
+}
+function renderTransitConnections() {
+    if (window.activeTransitLinesGroup) {
+        map.removeLayer(window.activeTransitLinesGroup);
+        window.activeTransitLinesGroup = null;
+    }
+
+    if (!state.data.transit || !state.data.transit.features) return;
+
+    // 1. Explicit Real-World Structural Order Routes for Vancouver Data Mapping
+    const realWorldRoutes = {
+        'Expo Line': [
+            'Waterfront', 'Burrard', 'Granville', 'Stadium - Chinatown', 
+            'Main Street - Science World', 'Commercial - Broadway', 
+            'Nanaimo', '29th Avenue', 'Joyce - Collingwood'
+        ],
+        'Millennium Line': [
+            'VCC - Clark', 'Commercial - Broadway', 'Renfrew', 'Rupert'
+        ],
+        'Canada Line': [
+            'Waterfront', 'Vancouver City Center', 'Yaletown - Roundhouse', 
+            'Olympic Village', 'Broadway - City Hall', 'King Edward', 
+            'Oakridge - 41st Avenue', 'Langara - 49th Avenue', 'Marine Drive'
+        ]
+    };
+
+    // 2. Hash existing station coordinates by name from your exact dataset
+    const stationGeometryLookup = new Map();
+    state.data.transit.features.forEach(f => {
+        const stationName = f.properties.STATION; // Matches your STATION header perfectly
+        if (stationName && f.geometry && f.geometry.coordinates) {
+            stationGeometryLookup.set(stationName.trim(), f.geometry.coordinates);
+        }
+    });
+
+    const linesToDisplay = [];
+    const transitLineColors = {
+        'Expo Line': '#1d4ed8',        // Blue
+        'Millennium Line': '#f59e0b',  // Gold
+        'Canada Line': '#06b6d4'       // Teal
+    };
+
+    // 3. Construct sequential tracks based on the clean route mappings
+    Object.keys(realWorldRoutes).forEach(lineName => {
+        const stationOrderList = realWorldRoutes[lineName];
+        const chosenColor = transitLineColors[lineName];
+
+        for (let i = 0; i < stationOrderList.length - 1; i++) {
+            const fromName = stationOrderList[i];
+            const toName = stationOrderList[i + 1];
+
+            const fromCoords = stationGeometryLookup.get(fromName);
+            const toCoords = stationGeometryLookup.get(toName);
+
+            // Ensure both coordinate points exist in the map set before drawing a link line
+            if (fromCoords && toCoords) {
+                const pathCoordinates = [
+                    [fromCoords[1], fromCoords[0]], // Leaflet Lat, Lng
+                    [toCoords[1], toCoords[0]]
+                ];
+
+                const trackSegment = L.polyline(pathCoordinates, {
+                    color: chosenColor,
+                    weight: 4,
+                    opacity: 0.8,
+                    lineJoin: 'round'
+                });
+
+                // Set up customized labels using your true dataset names
+                trackSegment.bindTooltip(`
+                    <div style="font-family: sans-serif; padding: 2px;">
+                        <strong style="color: ${chosenColor}; font-size: 0.85rem;">${lineName}</strong>
+                        <div style="margin-top: 4px; font-size: 0.75rem; color: #334155;">
+                            <strong>From:</strong> ${fromName}<br/>
+                            <strong>To:</strong> ${toName}
+                        </div>
+                    </div>
+                `, { sticky: true });
+
+                linesToDisplay.push(trackSegment);
+            }
+        }
+    });
+
+    window.activeTransitLinesGroup = L.layerGroup(linesToDisplay).addTo(map);
 }
 
 function renderActiveLayers() {
@@ -1273,6 +1362,10 @@ function setupEventListeners() {
 
             if (e.target.checked) {
                 state.activeLayers.add(layerKey);
+                // --- ADDED: Turn transit connections ON ---
+                if (layerKey === 'transit') {
+                    renderTransitConnections();
+                }
                 // Reveal property sliders if properties toggled
                 if (layerKey === 'properties') document.getElementById('property-filters').classList.remove('hidden');
                 if (layerKey === 'blocks') document.getElementById('block-filters').classList.remove('hidden');
@@ -1292,6 +1385,11 @@ function setupEventListeners() {
                 }
             } else {
                 state.activeLayers.delete(layerKey);
+                // --- ADDED: Turn transit connections OFF ---
+                if (layerKey === 'transit' && window.activeTransitLinesGroup) {
+                    map.removeLayer(window.activeTransitLinesGroup);
+                    window.activeTransitLinesGroup = null;
+                }
                 if (layerKey === 'properties') document.getElementById('property-filters').classList.add('hidden');
                 if (layerKey === 'blocks') document.getElementById('block-filters').classList.add('hidden');
                 if (layerKey === 'lights') document.getElementById('light-filters').classList.add('hidden');
@@ -1728,6 +1826,126 @@ function updateTdaPanel() {
         ${barcodeHtml}
     `;
 }
+// =========================================================================
+// --- SkyTrain Dynamic Granular Buffer Analysis Module ---
+// =========================================================================
+document.getElementById('buffer-zone-select').addEventListener('change', function(e) {
+    const selectedRadius = e.target.value;
+    const statsPanel = document.getElementById('buffer-stats-panel');
+    
+    // 1. Clear any temporary map highlights if they exist
+    if (window.activeBufferGroup) {
+        map.removeLayer(window.activeBufferGroup);
+        window.activeBufferGroup = null;
+    }
+
+
+    if (selectedRadius === 'none') {
+        statsPanel.style.display = 'none';
+        return;
+    }
+
+    // 2. Fast Fail Safe Verification
+    if (!state.data.transit || !state.data.crimes) {
+        console.warn("Required datasets are still parsing into active state memory.");
+        return;
+    }
+
+    statsPanel.style.display = 'block';
+    
+    let totalCrimesInRange = 0;
+    const crimeTypeCounts = {};
+    const layersToDisplay = [];
+
+    // Exact Haversine distance formula mapping coordinates to real-world meters
+    function getDistanceMeters(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; // Earth's radius in meters
+        const phi1 = lat1 * Math.PI / 180;
+        const phi2 = lat2 * Math.PI / 180;
+        const deltaPhi = (lat2 - lat1) * Math.PI / 180;
+        const deltaLambda = (lon2 - lon1) * Math.PI / 180;
+        
+        const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+                  Math.cos(phi1) * Math.cos(phi2) *
+                  Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    }
+
+    const radiusNum = parseInt(selectedRadius);
+    
+    // Distinct, analytical progression colors from core to margin
+    const colorMap = { 
+        50: '#dc2626',   // Hot Crimson: Platform Core
+        100: '#ef4444',  // Red: Immediate Entrance
+        150: '#f97316',  // Vivid Orange: Micro Catchment
+        200: '#f59e0b',  // Amber: Transitional Buffer
+        250: '#eab308'   // Yellow: Commercial Edge
+    };
+    const chosenColor = colorMap[radiusNum] || '#10b981';
+
+    // 3. Execution Phase: Compute intersecting crime nodes across all stations
+    state.data.transit.features.forEach(station => {
+        const sCoords = station.geometry.coordinates; // GeoJSON structure [lng, lat]
+        const sLat = sCoords[1];
+        const sLng = sCoords[0];
+
+        // Draw the visual focused ring on the map surface
+        const visualRing = L.circle([sLat, sLng], {
+            radius: radiusNum,
+            color: chosenColor,
+            weight: 2,
+            dashArray: '4, 4',
+            fillColor: chosenColor,
+            fillOpacity: 0.15,
+            interactive: false
+        });
+        layersToDisplay.push(visualRing);
+        
+        // FIX: Dig into features array and grab GeoJSON coordinates [lng, lat]
+        if (state.data.crimes && state.data.crimes.features) {
+            state.data.crimes.features.forEach(crime => {
+                if (!crime.geometry || !crime.geometry.coordinates) return;
+                
+                const cLng = crime.geometry.coordinates[0];
+                const cLat = crime.geometry.coordinates[1];
+                
+                const dist = getDistanceMeters(sLat, sLng, cLat, cLng);
+                if (dist <= radiusNum) {
+                    totalCrimesInRange++;
+                    const type = crime.properties.TYPE || "Other";
+                    crimeTypeCounts[type] = (crimeTypeCounts[type] || 0) + 1;
+                }
+            });
+        }
+    });
+
+    // 4. Inject visual elements cleanly onto the Leaflet canvas interface
+    window.activeBufferGroup = L.layerGroup(layersToDisplay).addTo(map);
+
+    // 5. Update the UI Sidebar Display elements dynamically
+    document.getElementById('buffer-crime-count').innerText = totalCrimesInRange.toLocaleString();
+    
+    // Construct structured breakdown layout sorted by incident metrics
+    let breakdownHTML = '<div style="font-weight:600; color:#94a3b8; margin-bottom:4px; font-size:0.7rem;">TOP PATTERNS:</div>';
+    const sortedTypes = Object.entries(crimeTypeCounts).sort((a, b) => b[1] - a[1]);
+    
+    if (sortedTypes.length === 0) {
+        breakdownHTML += '<div style="color:#64748b; font-style:italic;">No overlapping incidents within bounds.</div>';
+    } else {
+        sortedTypes.slice(0, 4).forEach(([type, count]) => {
+            // Trim uniform prefixes for visual cleanliness in narrow side panels
+            const cleanType = type.replace('Break and Enter ', 'B&E ').replace('Theft from ', 'Theft from: ');
+            breakdownHTML += `
+                <div style="display:flex; justify-content:space-between; margin-bottom:3px; color:#e2e8f0;">
+                    <span style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:140px;">• ${cleanType}</span>
+                    <span style="font-weight:600; color:#f1f5f9;">${count.toLocaleString()}</span>
+                </div>`;
+        });
+    }
+    
+    document.getElementById('buffer-crime-breakdown').innerHTML = breakdownHTML;
+});
 
 
 // Init

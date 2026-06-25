@@ -5,7 +5,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vancouver Analysis Dashboard</title>
-    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -15,24 +14,19 @@
 
 <body class="dark-theme">
     <div id="app">
-        <!-- Loading Screen -->
         <div id="loading-overlay" class="glass-panel active">
             <div class="spinner"></div>
             <h2 id="loading-text">Loading Data (0/7)...</h2>
         </div>
 
-        <!-- Fullscreen Map -->
         <div id="map"></div>
 
-        <!-- TDA floating overlay is intentionally hidden — content lives in the sidebar -->
         <div id="tda-insights-panel" style="display:none;">
             <div id="tda-stats-content"></div>
         </div>
 
-        <!-- Top Stats Container (Dynamic) -->
         <div id="stats-container" class="stats-container"></div>
 
-        <!-- Left Sidebar -->
         <aside id="sidebar" class="sidebar glass-panel">
             <div class="sidebar-header">
                 <h1>Vancouver Data Explorer</h1>
@@ -40,7 +34,6 @@
             </div>
 
             <div class="sidebar-content">
-                <!-- Properties -->
                 <div class="control-group">
                     <h3>Real Estate Properties</h3>
                     <label class="toggle-switch">
@@ -80,7 +73,6 @@
                     </div>
                 </div>
 
-                <!-- Crime -->
                 <div class="control-group">
                     <h3>Crime Incidents (2020)</h3>
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
@@ -102,7 +94,6 @@
                         Against Person</label>
                 </div>
 
-                <!-- Spatial Blocks -->
                 <div class="control-group">
                     <h3>Spatial Blocks</h3>
                     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">Blocks formed by street
@@ -180,7 +171,6 @@
                             </div>
                         </div>
 
-                        <!-- Block Grouping Slider -->
                         <div style="margin-top:14px;" id="block-grouping-container">
                             <label
                                 style="font-size:0.8rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:6px;">
@@ -205,36 +195,6 @@
                     </div>
                 </div>
 
-                <!-- TDA Insights
-                <div class="control-group"
-                    style="background: rgba(244, 114, 182, 0.05); border: 1px solid rgba(244, 114, 182, 0.2); border-radius: 8px; padding: 12px; margin-bottom: 20px;">
-                    <h3 style="color: #f472b6; margin-top: 0;">TDA Insights</h3>
-                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">Persistent Homology H1
-                        Loops</p>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="layer-tda-loops" class="layer-toggle" data-layer="tda_loops">
-                        <span class="slider round" style="background-color: #334155;"></span> <span
-                            style="font-weight: 500; color: #f8fafc;">Show H1 Loops</span>
-                    </label>
-                    <div id="loop-display-controls" class="hidden"
-                        style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(244, 114, 182, 0.2);">
-                        <label
-                            style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; display: block;">Loop
-                            Display:</label>
-                        <label class="radio-label"><input type="radio" name="loopMode" value="mode1"> Simplex
-                            structure</label>
-                        <label class="radio-label"><input type="radio" name="loopMode" value="mode2" checked> Boundary
-                            cycle</label>
-                        <label class="radio-label"><input type="radio" name="loopMode" value="mode3"> Zone
-                            overview</label>
-                    </div>
-                    Loop × Block insights — rendered here inside the sidebar -->
-                <!-- <div id="tda-inline-content"
-                        style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid rgba(244,114,182,0.2); font-size:0.85rem; color:#cbd5e1; text-align:left; line-height:1.5;">
-                    </div>
-                </div> -->
-
-                <!-- City Infrastructure -->
                 <div class="control-group">
                     <h3>City Infrastructure</h3>
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="street_network"
@@ -285,6 +245,26 @@
                     </div>
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="transit"> <span
                             class="slider round"></span> Transit Stations</label>
+                    
+                    <div class="buffer-analysis-container" style="margin: 10px 0 14px 24px; padding: 10px; background: rgba(255,255,255,0.04); border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.15);">
+                        <label for="buffer-zone-select" style="display:block; font-size: 0.78rem; color: #a7f3d0; margin-bottom: 6px; font-weight: 500;">Focused Buffer Zone:</label>
+                        <select id="buffer-zone-select" style="width: 100%; padding: 6px; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 4px; font-size: 0.78rem;">
+                            <option value="none">Disabled (Show All Rings)</option>
+                            <option value="50">50 Meters (Platform Core)</option>
+                            <option value="100">100 Meters (Immediate Entrance)</option>
+                            <option value="150">150 Meters (Micro Catchment)</option>
+                            <option value="200">200 Meters (Transitional Buffer)</option>
+                            <option value="250">250 Meters (Commercial Edge)</option>
+                        </select>
+                        <div id="buffer-stats-panel" style="margin-top: 10px; font-size: 0.75rem; display: none; line-height: 1.4; color: #cbd5e1;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:6px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 4px;">
+                                <span>Aggregated Crimes:</span>
+                                <span id="buffer-crime-count" style="color: #ef4444; font-weight: 700;">0</span>
+                            </div>
+                            <div id="buffer-crime-breakdown"></div>
+                        </div>
+                    </div>
+
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="lights"> <span
                             class="slider round"></span> Street Lights</label>
                     <div class="property-filters hidden" id="light-filters">
