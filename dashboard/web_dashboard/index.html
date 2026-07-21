@@ -31,6 +31,80 @@
             <div class="sidebar-header">
                 <h1>Vancouver Data Explorer</h1>
                 <p>Toggle layers to visualize and analyze city data.</p>
+                <div style="
+                    display: flex;
+                    align-items: center;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                    margin-top: 12px;
+                    background: rgba(255,255,255,0.05);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 8px;
+                    padding: 6px 10px;
+                ">
+                    <span style="font-size:0.75rem; color:#94a3b8; font-weight:600;">YEAR:</span>
+                    <button id="year-btn-2020" onclick="switchYear('2020')" style="
+                        background: #3b82f6;
+                        color: white;
+                        border: none;
+                        border-radius: 5px;
+                        padding: 4px 12px;
+                        font-size: 0.8rem;
+                        font-weight: 700;
+                        cursor: pointer;
+                    ">2020</button>
+                    <button id="year-btn-2021" onclick="switchYear('2021')" style="
+                    background: rgba(255,255,255,0.08);
+                    color: #94a3b8;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 5px;
+                    padding: 4px 12px;
+                    font-size: 0.8rem;
+                    font-weight: 700;
+                    cursor: pointer;
+                ">2021</button>
+                <button id="year-btn-2022" onclick="switchYear('2022')" style="
+                background: rgba(255,255,255,0.08);
+                color: #94a3b8;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 5px;
+                padding: 4px 12px;
+                font-size: 0.8rem;
+                font-weight: 700;
+                cursor: pointer;
+            ">2022</button>
+            <button id="year-btn-2023" onclick="switchYear('2023')" style="
+                    background: rgba(255,255,255,0.08);
+                    color: #94a3b8;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 5px;
+                    padding: 4px 12px;
+                    font-size: 0.8rem;
+                    font-weight: 700;
+                    cursor: pointer;
+                ">2023</button>
+                <button id="year-btn-2024" onclick="switchYear('2024')" style="
+                    background: rgba(255,255,255,0.08);
+                    color: #94a3b8;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 5px;
+                    padding: 4px 12px;
+                    font-size: 0.8rem;
+                    font-weight: 700;
+                    cursor: pointer;
+                ">2024</button>
+                <button id="year-btn-2025" onclick="switchYear('2025')" style="
+                background: rgba(255,255,255,0.08);
+                color: #94a3b8;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 5px;
+                padding: 4px 12px;
+                font-size: 0.8rem;
+                font-weight: 700;
+                cursor: pointer;
+            ">2025</button>
+                    <span id="year-loading" style="font-size:0.72rem; color:#f59e0b; display:none;">Loading...</span>
+                </div>
             </div>
 
             <div class="sidebar-content">
@@ -75,23 +149,26 @@
 
                 <div class="control-group">
                     <h3>Crime Incidents (2020)</h3>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="crime-Break and Enter Residential/Other"> <span class="slider round"></span> B&E
-                        Residential</label>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="crime-Break and Enter Commercial"> <span class="slider round"></span> B&E
-                        Commercial</label>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="crime-Theft of Bicycle"> <span class="slider round"></span> Bicycle
-                        Theft</label>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="crime-Theft from Vehicle"> <span class="slider round"></span> Theft from
-                        Vehicle</label>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="crime-Mischief"> <span class="slider round"></span> Mischief</label>
-                    <label class="toggle-switch"><input type="checkbox" class="layer-toggle"
-                            data-layer="crime-Offence Against a Person"> <span class="slider round"></span> Offence
-                        Against Person</label>
+                    <div style="
+                        background: rgba(16, 185, 129, 0.08);
+                        border: 1px solid rgba(16, 185, 129, 0.25);
+                        border-radius: 8px;
+                        padding: 8px 10px;
+                        margin-bottom: 12px;
+                    ">
+                        <div style="font-size: 0.7rem; color: #10b981; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px;">
+                            🚆 Transit Filter
+                        </div>
+                        <label class="toggle-switch" style="margin-bottom: 0;">
+                            <input type="checkbox" id="crimes-near-transit-toggle">
+                            <span class="slider round"></span>
+                            <span style="font-size: 0.82rem; color: #a7f3d0;">Crimes Around Transit Only</span>
+                        </label>
+                        <div style="font-size: 0.7rem; color: #475569; margin-top: 5px; line-height: 1.4;">
+                            Filters crime dots to selected buffer zone radius around each station.
+                        </div>
+                    </div>
+                    <div id="crime-toggles-container"></div>
                 </div>
 
                 <div class="control-group">
@@ -264,6 +341,12 @@
                             <div id="buffer-crime-breakdown"></div>
                         </div>
                     </div>
+                    <div id="stationRankingPanel" class="ranking-panel" style="display:none;">
+                        <div class="ranking-title">
+                            🚆 Station Crime Rankings
+                        </div>
+                        <div id="stationRankingList"></div>
+                    </div>
 
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="lights"> <span
                             class="slider round"></span> Street Lights</label>
@@ -278,12 +361,78 @@
                     <label class="toggle-switch"><input type="checkbox" class="layer-toggle" data-layer="businesses">
                         <span class="slider round"></span> Businesses</label>
                 </div>
+                
             </div>
         </aside>
+        <!-- Temporal Analysis Drawer -->
+        <div id="temporal-drawer" style="
+        position: fixed;
+        bottom: 0;
+        left: 35%;
+        right: 0;
+        height: 220px;
+        background: rgba(15, 23, 42, 0.97);
+        border-top: 1px solid rgba(255,255,255,0.1);
+        backdrop-filter: blur(12px);
+        z-index: 1000;
+        transform: translateY(100%);
+        transition: transform 0.3s ease;
+        display: flex;
+        flex-direction: column;
+        ">
+        <!-- Drawer Handle / Toggle -->
+        <div id="temporal-drawer-toggle" onclick="toggleTemporalDrawer()" style="
+            position: absolute;
+            top: -36px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.97);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            padding: 6px 20px;
+            cursor: pointer;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.78rem;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        ">
+            <span id="temporal-drawer-arrow">▲</span>
+            <span>Temporal Crime Patterns</span>
+        </div>
 
+        <!-- Tabs -->
+        <div style="
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding: 0 20px;
+            flex-shrink: 0;
+        ">
+            <button onclick="switchTemporalTab('month')" id="tab-month" class="temporal-tab active-tab">By Month</button>
+            <button onclick="switchTemporalTab('day')" id="tab-day" class="temporal-tab">By Day of Week</button>
+            <button onclick="switchTemporalTab('hour')" id="tab-hour" class="temporal-tab">By Hour</button>
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 8px 0;">
+                <span id="temporal-station-badge"></span>
+                <span style="font-size: 0.72rem; color: #475569;">Showing:</span>
+                <span id="temporal-chart-label" style="font-size: 0.72rem; color: #94a3b8; font-weight: 600;">All crime types</span>
+            </div>
+        </div>
+
+        <!-- Chart Area -->
+        <div style="flex: 1; overflow: hidden; padding: 12px 20px 8px;">
+            <div id="temporal-chart-container" style="width: 100%; height: 100%; position: relative;">
+                <svg id="temporal-chart-svg" width="100%" height="100%" style="overflow: visible;"></svg>
+            </div>
+        </div>
+        </div>
 
     </div>
-
+    
+    <script type="module" src="./temporal.js"></script>
     <script type="module" src="./main.js"></script>
 </body>
 

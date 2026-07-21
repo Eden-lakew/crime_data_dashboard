@@ -561,6 +561,47 @@ input[type=range]::-webkit-slider-runnable-track {
   border-radius: 8px;
   margin-top: 10px;
 }
+.ranking-panel{
+  margin-top:15px;
+  padding:12px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:10px;
+  max-height:300px;
+  overflow-y:auto;
+}
+
+.ranking-title{
+  color:#f8fafc;
+  font-weight:700;
+  margin-bottom:10px;
+  font-size:0.9rem;
+}
+
+.ranking-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:8px 0;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+}
+
+.rank-number{
+  width:28px;
+  color:#f59e0b;
+  font-weight:700;
+}
+
+.rank-name{
+  flex:1;
+  color:#f8fafc;
+  font-size:0.82rem;
+}
+
+.rank-count{
+  color:#ef4444;
+  font-weight:700;
+}
 
 /* ── Custom Scrollbar (shared) ────────────────────────────────────────── */
 .custom-scrollbar::-webkit-scrollbar,
@@ -575,4 +616,21 @@ input[type=range]::-webkit-slider-runnable-track {
 .analysis-modal-content::-webkit-scrollbar-thumb {
   background: var(--border-glass);
   border-radius: 10px;
+}
+.temporal-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #475569;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 7px 18px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.temporal-tab:hover { color: #94a3b8; }
+.active-tab {
+  color: #f8fafc !important;
+  border-bottom: 2px solid #3b82f6 !important;
 }

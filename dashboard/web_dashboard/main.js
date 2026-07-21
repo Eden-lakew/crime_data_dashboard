@@ -39,7 +39,9 @@ const state = {
         blockSdThreshold: 3.0,        // max allowed SD for block outlier filter
         blockGroupDiff: 0,             // max % difference allowed between grouped blocks (0 = no grouping)
         streetColorMode: 'crime',
-        loopMode: 'mode2'
+        loopMode: 'mode2',
+        crimesNearTransitOnly: false,
+        activeYear: '2020'
     },
     blockPropertyIndex: new Map(),    // block_id -> { values: [], ages: [] }
     blockGroups: new Map(),            // block_id -> group_avg (populated by computeBlockGroups)
@@ -193,7 +195,325 @@ L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
 const loadingOverlay = document.getElementById('loading-overlay');
 const loadingText = document.getElementById('loading-text');
 const statsContainer = document.getElementById('stats-container');
+function rankStationsByCrime(radiusMeters = 200) {
+    if (!state.data.transit || !state.data.crimes) return [];
 
+    const rankings = [];
+    const seen = new Set(); // handle duplicates
+
+    state.data.transit.features.forEach(station => {
+        const [sLng, sLat] = station.geometry.coordinates;
+        const name = station.properties.STATION;
+
+        // Skip duplicate stations
+        if (seen.has(name)) return;
+        seen.add(name);
+
+        let totalCount = 0;
+        const typeCounts = {};
+
+        state.data.crimes.features.forEach(crime => {
+            if (!crime.geometry?.coordinates) return;
+            const [cLng, cLat] = crime.geometry.coordinates;
+            if (getDistanceMeters(sLat, sLng, cLat, cLng) <= radiusMeters) {
+                totalCount++;
+                const type = crime.properties.TYPE || 'Unknown';
+                typeCounts[type] = (typeCounts[type] || 0) + 1;
+            }
+        });
+
+        // Find the most frequent crime type
+        const topCrimeType = Object.entries(typeCounts)
+            .sort((a, b) => b[1] - a[1])[0];
+
+        rankings.push({
+            name,
+            count: totalCount,
+            typeCounts,
+            topType: topCrimeType ? topCrimeType[0] : 'None',
+            topTypeCount: topCrimeType ? topCrimeType[1] : 0,
+            lat: sLat,
+            lng: sLng
+        });
+    });
+
+    rankings.sort((a, b) => b.count - a.count);
+    console.log("Station crime rankings:", rankings);
+    return rankings;
+}
+function renderStationHotspots(rankings, radiusMeters = 150)  {
+    if (window.stationHotspotGroup) {
+        map.removeLayer(window.stationHotspotGroup);
+    }
+
+    const maxCount = rankings[0]?.count || 1;
+
+    function getStationColor(count) {
+        const ratio = count / maxCount;
+        const lightness = 85 - ratio * 65;
+        return `hsl(0, 100%, ${lightness}%)`;
+    }
+
+    function getStationRadius(count) {
+        const ratio = count / maxCount;
+        if (ratio > 0.8) return 14;
+        if (ratio > 0.6) return 12;
+        if (ratio > 0.4) return 10;
+        if (ratio > 0.2) return 8;
+        return 6;
+    }
+
+    const markers = [];
+
+    rankings.forEach((station, index) => {
+        const color = getStationColor(station.count);
+        const radius = getStationRadius(station.count);
+
+        const sortedTypes = Object.entries(station.typeCounts)
+            .sort((a, b) => b[1] - a[1]);
+
+        let typeRowsHTML = '';
+        sortedTypes.forEach(([type, count]) => {
+            const pct = ((count / station.count) * 100).toFixed(0);
+            typeRowsHTML += `
+                <div style="display:flex; justify-content:space-between; 
+                            padding: 2px 0; border-bottom: 1px solid #f1f5f9;">
+                    <span style="color:#475569; font-size:0.75rem;">${type}</span>
+                    <span style="font-weight:600; color:#1e293b; font-size:0.75rem;">
+                        ${count} <span style="color:#94a3b8;">(${pct}%)</span>
+                    </span>
+                </div>`;
+        });
+
+        const popupHTML = `
+            <div style="font-family: 'Outfit', sans-serif; min-width: 220px;">
+                <div style="background:${color}; padding: 8px 10px; 
+                            border-radius: 6px 6px 0 0; margin: -1px -1px 0 -1px;">
+                    <div style="color:white; font-weight:700; font-size:0.95rem;">
+                        🚆 ${station.name}
+                    </div>
+                    <div style="color:rgba(255,255,255,0.85); font-size:0.75rem;">
+                        Rank #${index + 1} of ${rankings.length} stations
+                    </div>
+                </div>
+                <div style="padding: 8px 10px; background:#f8fafc; 
+                            border-bottom: 1px solid #e2e8f0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#64748b; font-size:0.8rem;">Total crimes (${radiusMeters ? radiusMeters : 150}m radius)</span>
+                        <span style="color:${color}; font-weight:800; font-size:1.1rem;">
+                            ${station.count.toLocaleString()}
+                        </span>
+                    </div>
+                    <div style="margin-top:4px; color:#475569; font-size:0.78rem;">
+                        Most common: 
+                        <b style="color:#1e293b;">${station.topType}</b> 
+                        (${station.topTypeCount} incidents)
+                    </div>
+                </div>
+                <div style="padding: 6px 10px 8px;">
+                    <div style="font-size:0.7rem; color:#94a3b8; 
+                                text-transform:uppercase; letter-spacing:0.5px; 
+                                margin-bottom:4px;">Crime Breakdown</div>
+                    ${typeRowsHTML}
+                </div>
+            </div>`;
+
+        const displayRadius = radius + 15;
+
+        const marker = L.circleMarker([station.lat, station.lng], {
+            radius: displayRadius,
+            fillColor: color,
+            color: '#ffffff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+        }).bindPopup(popupHTML, { maxWidth: 280 });
+
+        marker.on('mouseover', function () {
+            this.setStyle({ radius: displayRadius + 3, fillOpacity: 1 });
+        });
+        marker.on('mouseout', function () {
+            this.setStyle({ radius: displayRadius, fillOpacity: 0.9 });
+        });
+
+        markers.push(marker);
+    });
+    updateStationRankingPanel(rankings);
+
+    window.stationHotspotGroup = L.layerGroup(markers).addTo(map);
+}
+function updateStationRankingPanel(rankings) {
+
+    const list = document.getElementById("stationRankingList");
+
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    rankings.forEach((station, index) => {
+
+        const row = document.createElement("div");
+        row.className = "ranking-row";
+
+        row.innerHTML = `
+            <div class="rank-number">#${index + 1}</div>
+            <div class="rank-name">${station.name}</div>
+            <div class="rank-count">${station.count}</div>
+        `;
+
+        list.appendChild(row);
+    });
+}
+
+function renderCrimeBuffersByStation(crimeType, radiusMeters) {
+    if (window.crimeBufferGroup) {
+        map.removeLayer(window.crimeBufferGroup);
+        window.crimeBufferGroup = null;
+    }
+
+    if (!state.data.transit || !state.data.crimes) return;
+    if (!radiusMeters || radiusMeters === 'none') return;
+
+    // Get ALL currently active crime types from state, ignore the crimeType argument
+    const activeCrimeTypes = Array.from(state.activeLayers)
+        .filter(k => k.startsWith('crime-'))
+        .map(k => k.replace('crime-', ''));
+
+    if (activeCrimeTypes.length === 0) return;
+
+    const seen = new Set();
+    const stationCrimeCounts = [];
+
+    state.data.transit.features.forEach(station => {
+        const name = station.properties.STATION?.trim();
+        if (!name || seen.has(name)) return;
+        seen.add(name);
+
+        const [sLng, sLat] = station.geometry.coordinates;
+
+        // Count each active crime type separately
+        const typeCounts = {};
+        let totalCount = 0;
+
+        state.data.crimes.features.forEach(crime => {
+            if (!crime.geometry?.coordinates) return;
+            const type = crime.properties.TYPE;
+            if (!activeCrimeTypes.includes(type)) return;
+
+            const [cLng, cLat] = crime.geometry.coordinates;
+            if (getDistanceMeters(sLat, sLng, cLat, cLng) <= radiusMeters) {
+                typeCounts[type] = (typeCounts[type] || 0) + 1;
+                totalCount++;
+            }
+        });
+
+        stationCrimeCounts.push({ name, lat: sLat, lng: sLng, totalCount, typeCounts });
+    });
+
+    const maxCount = Math.max(...stationCrimeCounts.map(s => s.totalCount), 1);
+
+    function getBufferColor(count) {
+        const ratio = count / maxCount;
+        if (ratio > 0.8) return '#dc2626';
+        if (ratio > 0.6) return '#f97316';
+        if (ratio > 0.4) return '#f59e0b';
+        if (ratio > 0.2) return '#84cc16';
+        return '#64748b';
+    }
+
+    const layers = [];
+
+    stationCrimeCounts.forEach(station => {
+        const color = getBufferColor(station.totalCount);
+
+        const ring = L.circle([station.lat, station.lng], {
+            radius: radiusMeters,
+            color: color,
+            weight: 2,
+            dashArray: station.totalCount === 0 ? '4,6' : null,
+            fillColor: color,
+            fillOpacity: station.totalCount === 0 ? 0.03 : 0.15,
+            opacity: station.totalCount === 0 ? 0.3 : 0.8
+        });
+
+        // Build a row for each active crime type
+        let typeRowsHTML = '';
+        activeCrimeTypes.forEach(ct => {
+            const ctCount = station.typeCounts[ct] || 0;
+            typeRowsHTML += `
+                <div style="display:flex; justify-content:space-between;
+                            padding:2px 0; border-bottom:1px solid #e2e8f0;">
+                    <span style="color:#475569; font-size:0.75rem;">• ${ct}</span>
+                    <span style="font-weight:600; color:#1e293b; font-size:0.75rem;">${ctCount}</span>
+                </div>`;
+        });
+
+        const popupHTML = `
+            <div style="font-family: 'Outfit', sans-serif; min-width: 220px;">
+                <div style="background:${color}; padding: 7px 10px;
+                            border-radius: 6px 6px 0 0;">
+                    <div style="color:white; font-weight:700; font-size:0.9rem;">
+                        🚆 ${station.name}
+                    </div>
+                    <div style="color:rgba(255,255,255,0.85); font-size:0.72rem;">
+                        ${radiusMeters}m buffer zone
+                    </div>
+                </div>
+                <div style="padding: 8px 10px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#475569; font-size:0.82rem;">Total crimes (all active types)</span>
+                        <span style="color:${color}; font-weight:800; font-size:1.1rem;">${station.totalCount}</span>
+                    </div>
+                </div>
+                <div style="padding: 6px 10px 8px;">
+                    <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;
+                                letter-spacing:0.5px; margin-bottom:4px;">By Crime Type</div>
+                    ${typeRowsHTML}
+                </div>
+            </div>`;
+
+        ring.bindPopup(popupHTML, { maxWidth: 280 });
+
+        ring.on('mouseover', function () {
+            this.setStyle({ fillOpacity: 0.3, weight: 3 });
+        });
+        ring.on('mouseout', function () {
+            this.setStyle({
+                fillOpacity: station.totalCount === 0 ? 0.03 : 0.15,
+                weight: 2
+            });
+        });
+
+        layers.push(ring);
+    });
+
+    window.crimeBufferGroup = L.layerGroup(layers).addTo(map);
+}
+function refreshCrimeBuffers() {
+    const selectedRadius = document.getElementById('buffer-zone-select')?.value;
+    const radiusNum = selectedRadius && selectedRadius !== 'none' 
+        ? parseInt(selectedRadius) 
+        : null;
+
+    // Find which crime types are currently active
+    const activeCrimeTypes = Array.from(state.activeLayers)
+        .filter(k => k.startsWith('crime-'))
+        .map(k => k.replace('crime-', ''));
+
+    // Clear existing buffers
+    if (window.crimeBufferGroup) {
+        map.removeLayer(window.crimeBufferGroup);
+        window.crimeBufferGroup = null;
+    }
+
+    // Nothing to show if no radius selected or no crime types on
+    if (!radiusNum || activeCrimeTypes.length === 0) return;
+
+    // If multiple crime types are on, show the most recently toggled one
+    // (last in the set)
+    const lastActiveCrime = activeCrimeTypes[activeCrimeTypes.length - 1];
+    renderCrimeBuffersByStation(lastActiveCrime, radiusNum);
+}
 // Load Data
 async function loadDatasets() {
     const files = [
@@ -267,9 +587,27 @@ async function loadDatasets() {
         buildStreetNetworkGrids();
     }
 
-    loadingOverlay.classList.add('hidden');
-    setupEventListeners();
+    // Dynamically generate crime toggles from actual data
+if (state.data.crimes && state.data.crimes.features) {
+    const crimeTypes = [...new Set(
+        state.data.crimes.features.map(f => f.properties.TYPE).filter(Boolean)
+    )].sort();
+
+    const container = document.getElementById('crime-toggles-container');
+    container.innerHTML = crimeTypes.map(type => `
+        <label class="toggle-switch">
+            <input type="checkbox" class="layer-toggle" data-layer="crime-${type}">
+            <span class="slider round"></span> ${type}
+        </label>
+    `).join('');
+}
+
+loadingOverlay.classList.add('hidden');
+setupEventListeners();
     updateGradientLegends(); // trigger initial legend formats
+
+    // Store rankings but don't render yet — wait for transit toggle
+window.stationRankings = rankStationsByCrime(150);
 }
 
 // --- Per-Block Property Index ---
@@ -578,6 +916,7 @@ function updateStreetCrimeStats() {
 // Generate Leaflet GeoJSON layer
 function generateLayer(key, color, filterFn = null) {
     let datasetKey = key;
+    const seenTransitStations = new Set();
     let data;
 
     // Handle crime subsets
@@ -778,6 +1117,10 @@ function generateLayer(key, color, filterFn = null) {
             // Use meaningful icon for transit stations
             // Use meaningful icon for transit stations WITH interactive spatial buffer rings
             if (datasetKey === 'transit') {
+                if (seenTransitStations.has(feature.properties.STATION?.trim())) return L.marker([0,0], { opacity: 0 });
+                seenTransitStations.add(feature.properties.STATION?.trim());
+            }
+            if (datasetKey === 'transit') {
                 const transitIcon = L.divIcon({
                     html: '<div style="background-color: #10b981; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5); font-size: 14px;">🚆</div>',
                     className: 'custom-transit-icon',
@@ -787,6 +1130,10 @@ function generateLayer(key, color, filterFn = null) {
                 const marker = L.marker(latlng, { icon: transitIcon });
                 const stationName = feature.properties.STATION || 'Unknown Station';
                 marker.bindPopup(`<b>${stationName}</b>`);
+                marker.on('click', function () {
+                    const coords = feature.geometry.coordinates;
+                    window.setTemporalStation(stationName, coords[1], coords[0]);
+                });
                 return marker;
             }
 
@@ -997,13 +1344,17 @@ function renderTransitConnections() {
 
     // 2. Hash existing station coordinates by name from your exact dataset
     const stationGeometryLookup = new Map();
-    state.data.transit.features.forEach(f => {
-        const stationName = f.properties.STATION; // Matches your STATION header perfectly
-        if (stationName && f.geometry && f.geometry.coordinates) {
-            stationGeometryLookup.set(stationName.trim(), f.geometry.coordinates);
-        }
-    });
+const seenStations = new Set();
 
+state.data.transit.features.forEach(f => {
+    const stationName = f.properties.STATION?.trim();
+    if (!stationName || !f.geometry?.coordinates) return;
+    
+    if (!seenStations.has(stationName)) {
+        seenStations.add(stationName);
+        stationGeometryLookup.set(stationName, f.geometry.coordinates);
+    }
+});
     const linesToDisplay = [];
     const transitLineColors = {
         'Expo Line': '#1d4ed8',        // Blue
@@ -1155,6 +1506,27 @@ function renderActiveLayers() {
                 return state.activeLayers.has('crime-' + type);
             };
         }
+        // Filter crimes to only show within selected buffer zone radius of a transit station
+if (layerKey.startsWith('crime-') && state.filters.crimesNearTransitOnly) {
+    const selectedRadius = document.getElementById('buffer-zone-select')?.value;
+    const radius = selectedRadius && selectedRadius !== 'none' ? parseInt(selectedRadius) : 150;
+
+    filterFn = (feature) => {
+        if (!feature.geometry?.coordinates) return false;
+        if (!state.data.transit) return false;
+        const [cLng, cLat] = feature.geometry.coordinates;
+        if (cLng === 0 && cLat === 0) return false;
+
+        const seen = new Set();
+        return state.data.transit.features.some(station => {
+            const name = station.properties.STATION?.trim();
+            if (seen.has(name)) return false;
+            seen.add(name);
+            const [sLng, sLat] = station.geometry.coordinates;
+            return getDistanceMeters(sLat, sLng, cLat, cLng) <= radius;
+        });
+    };
+}
 
         // Apply property slider filters if this is the property layer
         if (layerKey === 'properties') {
@@ -1362,9 +1734,30 @@ function setupEventListeners() {
 
             if (e.target.checked) {
                 state.activeLayers.add(layerKey);
+                // Hide ranking panel when any crime type is turned on
+                if (layerKey.startsWith('crime-')) {
+                    const panel = document.getElementById('stationRankingPanel');
+                    if (panel) panel.style.display = 'none';
+                }
+               
+            
                 // --- ADDED: Turn transit connections ON ---
                 if (layerKey === 'transit') {
                     renderTransitConnections();
+                    if (window.stationRankings) {
+                        const currentRadius = document.getElementById('buffer-zone-select')?.value;
+                        const radius = currentRadius && currentRadius !== 'none' ? parseInt(currentRadius) : 150;
+                        renderStationHotspots(window.stationRankings, radius);
+                    }
+                }
+                if (layerKey.startsWith('crime-')) {
+                    refreshCrimeBuffers();
+                    const bufferSelect = document.getElementById('buffer-zone-select');
+                    if (bufferSelect && bufferSelect.value !== 'none' && state.activeLayers.has('transit')) {
+                        const radius = parseInt(bufferSelect.value);
+                        window.stationRankings = rankStationsByCrime(radius);
+                        updateStationRankingPanel(window.stationRankings);
+                    }
                 }
                 // Reveal property sliders if properties toggled
                 if (layerKey === 'properties') document.getElementById('property-filters').classList.remove('hidden');
@@ -1385,7 +1778,29 @@ function setupEventListeners() {
                 }
             } else {
                 state.activeLayers.delete(layerKey);
+                // Show ranking panel again when all crime types are turned off
+                if (layerKey.startsWith('crime-')) {
+                    const bufferSelect = document.getElementById('buffer-zone-select');
+                    if (bufferSelect && bufferSelect.value !== 'none' && state.activeLayers.has('transit')) {
+                        const radius = parseInt(bufferSelect.value);
+                        window.stationRankings = rankStationsByCrime(radius);
+                        updateStationRankingPanel(window.stationRankings);
+                    }
+                }
                 // --- ADDED: Turn transit connections OFF ---
+                if (layerKey === 'transit') {
+                    if (window.activeTransitLinesGroup) {
+                        map.removeLayer(window.activeTransitLinesGroup);
+                        window.activeTransitLinesGroup = null;
+                    }
+                    if (window.stationHotspotGroup) {
+                        map.removeLayer(window.stationHotspotGroup);
+                        window.stationHotspotGroup = null;
+                    }
+                    // Hide ranking panel when transit is turned off
+                const panel = document.getElementById('stationRankingPanel');
+                if (panel) panel.style.display = 'none';
+                }
                 if (layerKey === 'transit' && window.activeTransitLinesGroup) {
                     map.removeLayer(window.activeTransitLinesGroup);
                     window.activeTransitLinesGroup = null;
@@ -1416,7 +1831,12 @@ function setupEventListeners() {
             renderActiveLayers();
         });
     });
-
+    const crimesNearTransitToggle = document.getElementById('crimes-near-transit-toggle');
+crimesNearTransitToggle.addEventListener('change', (e) => {
+    state.filters.crimesNearTransitOnly = e.target.checked;
+    renderActiveLayers();
+});
+    
     // property sliders
     const propValSlider = document.getElementById('prop-value');
     const propValDisplay = document.getElementById('val-display');
@@ -1838,6 +2258,19 @@ document.getElementById('buffer-zone-select').addEventListener('change', functio
         map.removeLayer(window.activeBufferGroup);
         window.activeBufferGroup = null;
     }
+    refreshCrimeBuffers();
+    const panel = document.getElementById('stationRankingPanel');
+    const hasActiveCrimes = Array.from(state.activeLayers).some(k => k.startsWith('crime-'));
+    if (panel) {
+        if (selectedRadius === 'none' || hasActiveCrimes) {
+            panel.style.display = 'none';
+        } else {
+            panel.style.display = 'block';
+        }
+    }
+    if (selectedRadius !== 'none' && !hasActiveCrimes && window.stationRankings) {
+        updateStationRankingPanel(window.stationRankings);
+    }
 
 
     if (selectedRadius === 'none') {
@@ -1927,27 +2360,158 @@ document.getElementById('buffer-zone-select').addEventListener('change', functio
     document.getElementById('buffer-crime-count').innerText = totalCrimesInRange.toLocaleString();
     
     // Construct structured breakdown layout sorted by incident metrics
-    let breakdownHTML = '<div style="font-weight:600; color:#94a3b8; margin-bottom:4px; font-size:0.7rem;">TOP PATTERNS:</div>';
-    const sortedTypes = Object.entries(crimeTypeCounts).sort((a, b) => b[1] - a[1]);
-    
-    if (sortedTypes.length === 0) {
-        breakdownHTML += '<div style="color:#64748b; font-style:italic;">No overlapping incidents within bounds.</div>';
-    } else {
-        sortedTypes.slice(0, 4).forEach(([type, count]) => {
-            // Trim uniform prefixes for visual cleanliness in narrow side panels
-            const cleanType = type.replace('Break and Enter ', 'B&E ').replace('Theft from ', 'Theft from: ');
+    let breakdownHTML = '<div style="font-weight:600; color:#94a3b8; margin-bottom:4px; font-size:0.7rem;">CRIME BREAKDOWN:</div>';
+const sortedTypes = Object.entries(crimeTypeCounts).sort((a, b) => b[1] - a[1]);
+
+if (sortedTypes.length === 0) {
+    breakdownHTML += '<div style="color:#64748b; font-style:italic;">No overlapping incidents within bounds.</div>';
+} else {
+    // Show all crimes — top 3 visible, rest hidden in collapsible section
+    const topTypes = sortedTypes.slice(0, 3);
+    const moreTypes = sortedTypes.slice(3);
+
+    topTypes.forEach(([type, count]) => {
+        breakdownHTML += `
+            <div style="display:flex; justify-content:space-between; margin-bottom:3px; color:#e2e8f0;">
+                <span style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:160px;">• ${type}</span>
+                <span style="font-weight:600; color:#f1f5f9;">${count.toLocaleString()}</span>
+            </div>`;
+    });
+
+    if (moreTypes.length > 0) {
+        // Hidden section with remaining crimes
+        breakdownHTML += `<div id="buffer-more-crimes" style="display:none; margin-top:2px;">`;
+        moreTypes.forEach(([type, count]) => {
             breakdownHTML += `
                 <div style="display:flex; justify-content:space-between; margin-bottom:3px; color:#e2e8f0;">
-                    <span style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:140px;">• ${cleanType}</span>
+                    <span style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:160px;">• ${type}</span>
                     <span style="font-weight:600; color:#f1f5f9;">${count.toLocaleString()}</span>
                 </div>`;
         });
+        breakdownHTML += `</div>`;
+
+        // Toggle button
+        breakdownHTML += `
+            <button 
+                id="buffer-show-more-btn"
+                onclick="
+                    const el = document.getElementById('buffer-more-crimes');
+                    const btn = document.getElementById('buffer-show-more-btn');
+                    if (el.style.display === 'none') {
+                        el.style.display = 'block';
+                        btn.textContent = '▲ Show less';
+                    } else {
+                        el.style.display = 'none';
+                        btn.textContent = '▼ Show ${moreTypes.length} more crime type${moreTypes.length > 1 ? 's' : ''}';
+                    }
+                "
+                style="margin-top:6px; background:none; border:1px solid #334155; border-radius:4px;
+                       color:#94a3b8; font-size:0.72rem; padding:3px 8px; cursor:pointer; width:100%;
+                       text-align:left;">
+                ▼ Show ${moreTypes.length} more crime type${moreTypes.length > 1 ? 's' : ''}
+            </button>`;
     }
-    
-    document.getElementById('buffer-crime-breakdown').innerHTML = breakdownHTML;
+}
+
+        document.getElementById('buffer-crime-breakdown').innerHTML = breakdownHTML;
+        // Re-render hotspot circles using the selected buffer radius
+        if (state.data.transit && state.data.crimes) {
+            const newRadius = selectedRadius === 'none' ? 150 : parseInt(selectedRadius);
+            window.stationRankings = rankStationsByCrime(newRadius);
+            if (window.stationHotspotGroup) {
+                const currentRadius = document.getElementById('buffer-zone-select')?.value;
+                const radius = currentRadius && currentRadius !== 'none' ? parseInt(currentRadius) : 150;
+                renderStationHotspots(window.stationRankings, radius);
+            }
+        }
+        
+        // Re-render crime dots to match new buffer zone radius
+        renderActiveLayers();
 });
 
+window.switchYear = async function(year) {
+    if (state.filters.activeYear === year) return;
 
+    // Update button styles
+    ['2020', '2021', '2022', '2023', '2024', '2025'].forEach(y => {
+        const btn = document.getElementById(`year-btn-${y}`);
+        btn.style.background = year === y ? '#3b82f6' : 'rgba(255,255,255,0.08)';
+        btn.style.color = year === y ? 'white' : '#94a3b8';
+        btn.style.border = year === y ? 'none' : '1px solid rgba(255,255,255,0.1)';
+    });
+    // Show loading
+    const loadingEl = document.getElementById('year-loading');
+    loadingEl.style.display = 'inline';
+
+    // Load the correct crimes file
+    const url = year === '2020' ? './public/data/crimes.json'
+          : year === '2021' ? './public/data/crimes_2021.json'
+          : year === '2022' ? './public/data/crimes_2022.json'
+          : year === '2023' ? './public/data/crimes_2023.json'
+          : year === '2024' ? './public/data/crimes_2024.json'
+          : './public/data/crimes_2025.json';
+    try {
+        const res = await fetch(url);
+        state.data.crimes = await res.json();
+        state.filters.activeYear = year;
+
+        // Regenerate crime toggles from new data
+        const crimeTypes = [...new Set(
+            state.data.crimes.features.map(f => f.properties.TYPE).filter(Boolean)
+        )].sort();
+
+        const container = document.getElementById('crime-toggles-container');
+        container.innerHTML = crimeTypes.map(type => `
+            <label class="toggle-switch">
+                <input type="checkbox" class="layer-toggle" data-layer="crime-${type}">
+                <span class="slider round"></span> ${type}
+            </label>
+        `).join('');
+
+        // Re-attach event listeners to new toggles
+        container.querySelectorAll('.layer-toggle').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const layerKey = e.target.dataset.layer;
+                if (e.target.checked) {
+                    state.activeLayers.add(layerKey);
+                    if (layerKey.startsWith('crime-')) refreshCrimeBuffers();
+                } else {
+                    state.activeLayers.delete(layerKey);
+                    if (layerKey.startsWith('crime-')) {
+                        if (window.crimeBufferGroup) {
+                            map.removeLayer(window.crimeBufferGroup);
+                            window.crimeBufferGroup = null;
+                        }
+                    }
+                }
+                renderActiveLayers();
+            });
+        });
+
+        // Clear active crime layers and re-render
+        Array.from(state.activeLayers)
+            .filter(k => k.startsWith('crime-'))
+            .forEach(k => state.activeLayers.delete(k));
+
+        renderActiveLayers();
+
+        // Update station rankings if transit is on
+        if (window.stationHotspotGroup) {
+            const currentRadius = document.getElementById('buffer-zone-select')?.value;
+            const radius = currentRadius && currentRadius !== 'none' ? parseInt(currentRadius) : 150;
+            window.stationRankings = rankStationsByCrime(radius);
+            renderStationHotspots(window.stationRankings, radius);
+        }
+
+    } catch (e) {
+        console.error('Failed to load crimes for year:', year, e);
+    }
+
+    loadingEl.style.display = 'none';
+}
+// Defined in temporal.js — called after year switch and crime toggles
+window.updateTemporalChart = function() {};
+export { state, COLORS };
 // Init
 window.addEventListener('DOMContentLoaded', () => {
     loadDatasets();
