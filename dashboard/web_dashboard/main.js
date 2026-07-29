@@ -1507,27 +1507,31 @@ function renderActiveLayers() {
             };
         }
         // Filter crimes to only show within selected buffer zone radius of a transit station
-if (layerKey.startsWith('crime-') && state.filters.crimesNearTransitOnly) {
-    const selectedRadius = document.getElementById('buffer-zone-select')?.value;
-    const radius = selectedRadius && selectedRadius !== 'none' ? parseInt(selectedRadius) : 150;
-
-    filterFn = (feature) => {
-        if (!feature.geometry?.coordinates) return false;
-        if (!state.data.transit) return false;
-        const [cLng, cLat] = feature.geometry.coordinates;
-        if (cLng === 0 && cLat === 0) return false;
-
-        const seen = new Set();
-        return state.data.transit.features.some(station => {
-            const name = station.properties.STATION?.trim();
-            if (seen.has(name)) return false;
-            seen.add(name);
-            const [sLng, sLat] = station.geometry.coordinates;
-            return getDistanceMeters(sLat, sLng, cLat, cLng) <= radius;
-        });
-    };
-}
-
+        if (layerKey.startsWith('crime-') && state.filters.crimesNearTransitOnly) {
+            const selectedRadius = document.getElementById('buffer-zone-select')?.value;
+        
+            if (!selectedRadius || selectedRadius === 'none') {
+                // No buffer selected — show nothing instead of guessing a radius
+                filterFn = () => false;
+            } else {
+                const radius = parseInt(selectedRadius);
+                filterFn = (feature) => {
+                    if (!feature.geometry?.coordinates) return false;
+                    if (!state.data.transit) return false;
+                    const [cLng, cLat] = feature.geometry.coordinates;
+                    if (cLng === 0 && cLat === 0) return false;
+        
+                    const seen = new Set();
+                    return state.data.transit.features.some(station => {
+                        const name = station.properties.STATION?.trim();
+                        if (seen.has(name)) return false;
+                        seen.add(name);
+                        const [sLng, sLat] = station.geometry.coordinates;
+                        return getDistanceMeters(sLat, sLng, cLat, cLng) <= radius;
+                    });
+                };
+            }
+        }
         // Apply property slider filters if this is the property layer
         if (layerKey === 'properties') {
             filterFn = (feature) => {
@@ -1829,10 +1833,12 @@ function setupEventListeners() {
             }
 
             renderActiveLayers();
+            // Keep temporal drawer in sync with crime type toggles
+            if (window.updateTemporalChart) window.updateTemporalChart();
         });
     });
     const crimesNearTransitToggle = document.getElementById('crimes-near-transit-toggle');
-crimesNearTransitToggle.addEventListener('change', (e) => {
+    crimesNearTransitToggle.addEventListener('change', (e) => {
     state.filters.crimesNearTransitOnly = e.target.checked;
     renderActiveLayers();
 });
@@ -2427,6 +2433,8 @@ if (sortedTypes.length === 0) {
         
         // Re-render crime dots to match new buffer zone radius
         renderActiveLayers();
+         // Keep temporal drawer in sync with buffer radius changes
+         if (window.updateTemporalChart) window.updateTemporalChart();
 });
 
 window.switchYear = async function(year) {
@@ -2510,7 +2518,6 @@ window.switchYear = async function(year) {
     loadingEl.style.display = 'none';
 }
 // Defined in temporal.js — called after year switch and crime toggles
-window.updateTemporalChart = function() {};
 export { state, COLORS };
 // Init
 window.addEventListener('DOMContentLoaded', () => {

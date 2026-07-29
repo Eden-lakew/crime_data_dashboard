@@ -167,6 +167,7 @@
                         <div style="font-size: 0.7rem; color: #475569; margin-top: 5px; line-height: 1.4;">
                             Filters crime dots to selected buffer zone radius around each station.
                         </div>
+    
                     </div>
                     <div id="crime-toggles-container"></div>
                 </div>
@@ -370,7 +371,7 @@
         bottom: 0;
         left: 35%;
         right: 0;
-        height: 220px;
+        height: 300px;
         background: rgba(15, 23, 42, 0.97);
         border-top: 1px solid rgba(255,255,255,0.1);
         backdrop-filter: blur(12px);
@@ -405,6 +406,7 @@
         </div>
 
         <!-- Tabs -->
+        <div id="temporal-tabs-row" style="display: flex;">
         <div style="
             display: flex;
             gap: 0;
@@ -412,9 +414,12 @@
             padding: 0 20px;
             flex-shrink: 0;
         ">
-            <button onclick="switchTemporalTab('month')" id="tab-month" class="temporal-tab active-tab">By Month</button>
-            <button onclick="switchTemporalTab('day')" id="tab-day" class="temporal-tab">By Day of Week</button>
-            <button onclick="switchTemporalTab('hour')" id="tab-hour" class="temporal-tab">By Hour</button>
+            
+                <button onclick="switchTemporalTab('month')" id="tab-month" class="temporal-tab active-tab">By Month</button>
+                <button onclick="switchTemporalTab('day')" id="tab-day" class="temporal-tab">By Day of Week</button>
+                <button onclick="switchTemporalTab('season')" id="tab-season" class="temporal-tab">Season</button>
+                <button onclick="switchTemporalTab('hour')" id="tab-hour" class="temporal-tab">By Hour</button>
+            </div>
             <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 8px 0;">
                 <span id="temporal-station-badge"></span>
                 <span style="font-size: 0.72rem; color: #475569;">Showing:</span>
@@ -423,8 +428,9 @@
         </div>
 
         <!-- Chart Area -->
-        <div style="flex: 1; overflow: hidden; padding: 12px 20px 8px;">
-            <div id="temporal-chart-container" style="width: 100%; height: 100%; position: relative;">
+        <div style="flex: 1; overflow: hidden; padding: 12px 20px 8px; display: flex; flex-direction: column;">
+            <div id="temporal-station-summary" style="flex-shrink: 0; padding-bottom: 6px;"></div>
+            <div id="temporal-chart-container" style="width: 100%; flex: 1; position: relative; min-height: 0; overflow-y: auto;">
                 <svg id="temporal-chart-svg" width="100%" height="100%" style="overflow: visible;"></svg>
             </div>
         </div>
