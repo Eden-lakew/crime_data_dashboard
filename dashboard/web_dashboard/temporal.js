@@ -6,7 +6,7 @@ import { state, COLORS } from './main.js';
 
 let activeTemporalTab = 'month';
 let drawerOpen = false;
-
+let ambientView = 'population';
 // Active station filter — null means city-wide
 let activeStation = null; // { name, lat, lng, radiusMeters }
 
@@ -39,6 +39,15 @@ window.switchTemporalTab = function (tab) {
         document.getElementById(`tab-${t}`)
             .classList.toggle('active-tab', t === tab);
     });
+    updateTemporalChart();
+};
+ 
+window.switchAmbientView = function (view) {
+    ambientView = view;
+    const popBtn = document.getElementById('ambient-toggle-pop');
+    const rateBtn = document.getElementById('ambient-toggle-rate');
+    if (popBtn) popBtn.classList.toggle('active-tab', view === 'population');
+    if (rateBtn) rateBtn.classList.toggle('active-tab', view === 'rate');
     updateTemporalChart();
 };
 
@@ -192,7 +201,142 @@ function getCurrentRadius() {
     if (!bufferSelect || bufferSelect.value === 'none') return null;
     return parseInt(bufferSelect.value);
 }
+function getStationCERByType(stationName, radius) {
+    const cerData = state.data.cer;
+    if (!cerData?.[stationName]?.[String(radius)] || radius === null) return null;
+    const { ambient, crimeByType } = cerData[stationName][String(radius)];
+    if (!ambient || !crimeByType) return null;
 
+    const activeCrimeTypes = Array.from(state.activeLayers)
+        .filter(k => k.startsWith('crime-')).map(k => k.replace('crime-', ''));
+    const types = activeCrimeTypes.length > 0 ? activeCrimeTypes : Object.keys(crimeByType);
+
+    const result = {}; // { type: { bucketLabel: rate|null } }
+
+    types.forEach(type => {
+        if (activeTemporalTab === 'month') {
+            result[type] = {};
+            MONTHS.forEach((label, i) => {
+                const monthKey = String(i + 1);
+                const hourObj = ambient[monthKey];
+                if (!hourObj) { result[type][label] = null; return; }
+                let c = 0, a = 0;
+                Object.keys(hourObj).forEach(hourKey => {
+                    c += crimeByType[type]?.[monthKey]?.[hourKey] || 0;
+                    a += hourObj[hourKey];
+                });
+                result[type][label] = a > 0 ? (c / a) * 10000 : null;
+            });
+        }
+
+        if (activeTemporalTab === 'season') {
+            const totals = {};
+            SEASONS.forEach(s => { totals[s] = { crime: 0, ambient: 0 }; });
+            Object.entries(ambient).forEach(([monthKey, hourObj]) => {
+                const season = MONTH_TO_SEASON[parseInt(monthKey)];
+                if (!season) return;
+                Object.entries(hourObj).forEach(([hourKey, v]) => {
+                    totals[season].crime += crimeByType[type]?.[monthKey]?.[hourKey] || 0;
+                    totals[season].ambient += v;
+                });
+            });
+            result[type] = {};
+            SEASONS.forEach(s => {
+                result[type][s] = totals[s].ambient > 0 ? (totals[s].crime / totals[s].ambient) * 10000 : null;
+            });
+        }
+
+        if (activeTemporalTab === 'hour') {
+            const totals = {};
+            HOURS.forEach(h => { totals[h] = { crime: 0, ambient: 0 }; });
+            Object.entries(ambient).forEach(([monthKey, hourObj]) => {
+                Object.entries(hourObj).forEach(([hourKey, v]) => {
+                    const label = `${hourKey}:00`;
+                    if (!totals[label]) return;
+                    totals[label].crime += crimeByType[type]?.[monthKey]?.[hourKey] || 0;
+                    totals[label].ambient += v;
+                });
+            });
+            result[type] = {};
+            HOURS.forEach(h => {
+                result[type][h] = totals[h].ambient > 0 ? (totals[h].crime / totals[h].ambient) * 10000 : null;
+            });
+        }
+    });
+
+    return result; // 'day' tab still unsupported — no ambient equivalent
+}
+ 
+function getAmbientByBucket(stationName, radius) {
+    const cerData = state.data.cer;
+    if (!cerData?.[stationName]?.[String(radius)] || radius === null) return null;
+    const { ambient } = cerData[stationName][String(radius)];
+    if (!ambient) return null;
+
+    if (activeTemporalTab === 'month') {
+        const result = {};
+        MONTHS.forEach((label, i) => {
+            const hourObj = ambient[String(i + 1)];
+            if (!hourObj) { result[label] = null; return; }
+            const vals = Object.values(hourObj);
+            result[label] = vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+        });
+        return result;
+    }
+
+    if (activeTemporalTab === 'season') {
+        const totals = {}, counts = {};
+        SEASONS.forEach(s => { totals[s] = 0; counts[s] = 0; });
+        Object.entries(ambient).forEach(([monthKey, hourObj]) => {
+            const season = MONTH_TO_SEASON[parseInt(monthKey)];
+            if (!season) return;
+            Object.values(hourObj).forEach(v => { totals[season] += v; counts[season] += 1; });
+        });
+        const result = {};
+        SEASONS.forEach(s => { result[s] = counts[s] > 0 ? totals[s] / counts[s] : null; });
+        return result;
+    }
+
+    if (activeTemporalTab === 'hour') {
+        const totals = {};
+        const counts = {};
+        HOURS.forEach(h => { totals[h] = 0; counts[h] = 0; });
+        Object.values(ambient).forEach(hourObj => {
+            Object.entries(hourObj).forEach(([hourKey, v]) => {
+                const label = `${hourKey}:00`;
+                if (totals[label] === undefined) return;
+                totals[label] += v;
+                counts[label] += 1;
+            });
+        });
+        const result = {};
+        HOURS.forEach(h => {
+            result[h] = counts[h] > 0 ? totals[h] / counts[h] : null;
+        });
+        return result;
+    }
+
+    return null; // 'day' tab still unsupported — no ambient equivalent
+}
+ 
+function getFilteredCrimeTotal(stationName, radius) {
+    const cerData = state.data.cer;
+    if (!cerData?.[stationName]?.[String(radius)] || radius === null) return 0;
+    const { crimeByType } = cerData[stationName][String(radius)];
+    if (!crimeByType) return 0;
+ 
+    const activeCrimeTypes = Array.from(state.activeLayers)
+        .filter(k => k.startsWith('crime-')).map(k => k.replace('crime-', ''));
+    const typesToSum = activeCrimeTypes.length > 0 ? activeCrimeTypes : Object.keys(crimeByType);
+ 
+    let total = 0;
+    typesToSum.forEach(type => {
+        Object.values(crimeByType[type] || {}).forEach(hourObj => {
+            total += Object.values(hourObj).reduce((s, v) => s + v, 0);
+        });
+    });
+    return total;
+}
 // ── Per-station ranking when no station is selected ────────────────────────
 function getAllStationsSummary() {
     if (!state.data.transit || !state.data.crimes) return [];
@@ -202,12 +346,19 @@ function getAllStationsSummary() {
         .map(k => k.replace('crime-', ''));
     const useAll = activeCrimeTypes.length === 0;
 
-    const stations = state.data.transit.features.map(t => ({
-        name: t.properties.STATION || 'Unknown',
-        lat: t.geometry.coordinates[1],
-        lng: t.geometry.coordinates[0],
-        hourCounts: {}, dayCounts: {}, typeCounts: {}, total: 0
-    }));
+    const seenNames = new Set();
+    const stations = [];
+    state.data.transit.features.forEach(t => {
+        const name = t.properties.STATION || 'Unknown';
+        if (seenNames.has(name)) return; // skip duplicate coordinate entries — matches main.js's convention
+        seenNames.add(name);
+        stations.push({
+            name,
+            lat: t.geometry.coordinates[1],
+            lng: t.geometry.coordinates[0],
+            hourCounts: {}, dayCounts: {}, typeCounts: {}, total: 0
+        });
+});
 
     function attribute(s, p) {
         s.total++;
@@ -249,7 +400,7 @@ function getAllStationsSummary() {
             total: s.total,
             peakHour: peakHour ? `${peakHour[0]}:00` : '—',
             peakDay: peakDay ? peakDay[0] : '—',
-            domType: domType ? `${domType[0]} (${domType[1]})` : '—'
+            domType: domType ? `${domType[0]} (${domType[1]})` : '—',
         };
     }).sort((a, b) => b.total - a.total);
 }
@@ -265,19 +416,19 @@ window.sortStationRanking = function (key) {
 function renderStationRanking() {
     const container = document.getElementById('temporal-chart-container');
     if (!container) return;
-
+ 
     const radius = getCurrentRadius();
     const countLabel = radius !== null
     ? `Count (${radius}m buffer)`
     : 'Count (no buffer selected)';
-
+ 
     let rows = getAllStationsSummary();
     rows.sort((a, b) => {
         const va = a[rankSortKey], vb = b[rankSortKey];
         if (typeof va === 'number') return (va - vb) * rankSortDir;
         return String(va).localeCompare(String(vb)) * rankSortDir;
     });
-
+ 
     container.innerHTML = `
         <table style="width:100%; border-collapse:collapse; font-size:0.8rem; font-family:Outfit,sans-serif;">
             <thead>
@@ -381,35 +532,33 @@ function colorForType(type, index) {
         ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'][index % 6];
 }
 
-// ── Main render ───────────────────────────────────────────────────────────
 export function updateTemporalChart() {
     if (!drawerOpen) return;
 
     updateStationBadge();
     const tabsRow = document.getElementById('temporal-tabs-row');
-    // ── No station selected → show ranking table instead of chart ─────────
+    const ambientSection = document.getElementById('ambient-section');
+
     if (!activeStation) {
         if (tabsRow) tabsRow.style.display = 'none';
+        if (ambientSection) ambientSection.style.display = 'none';
         const summaryEl = document.getElementById('temporal-station-summary');
         if (summaryEl) summaryEl.innerHTML = '';
         renderStationRanking();
         return;
     }
     if (tabsRow) tabsRow.style.display = 'flex';
+    if (ambientSection) ambientSection.style.display = 'block';
     renderStationSummary();
-
-    // Ensure the SVG element exists — renderStationRanking() replaces
-    // temporal-chart-container's innerHTML, so it may have been removed
-    // Ensure the SVG element exists — renderStationRanking() replaces
-    // temporal-chart-container's innerHTML, so it may have been removed
+ 
     const chartContainer = document.getElementById('temporal-chart-container');
     if (chartContainer && !document.getElementById('temporal-chart-svg')) {
         chartContainer.innerHTML = `<svg id="temporal-chart-svg" width="100%" height="100%" style="overflow: visible;"></svg>`;
     }
-
+ 
     const svg = document.getElementById('temporal-chart-svg');
     if (!svg) return;
-
+ 
     const data = getTemporalData();
     if (!data) {
         svg.innerHTML = `
@@ -419,50 +568,43 @@ export function updateTemporalChart() {
             </text>`;
         return;
     }
-
+ 
     const { buckets, counts, allTypes } = data;
-
-    // Update "Showing:" label
+ 
     const label = document.getElementById('temporal-chart-label');
     if (label) {
         label.textContent = allTypes[0] === 'All Crimes'
             ? 'All crime types'
             : allTypes.join(', ');
     }
-
-    // ── Dimensions ──────────────────────────────────────────────────────
+ 
     const container = document.getElementById('temporal-chart-container');
     const W  = container.clientWidth  || 800;
     const H  = container.clientHeight || 180;
     const mL = 52, mR = 16, mT = 6, mB = allTypes.length > 1 ? 44 : 28;
     const cW = W - mL - mR;
     const cH = H - mT - mB;
-
-    // ── Color map ────────────────────────────────────────────────────────
+ 
     const typeColorMap = {};
     allTypes.forEach((t, i) => { typeColorMap[t] = colorForType(t, i); });
-
-    // ── Scale ────────────────────────────────────────────────────────────
+ 
     const bucketTotals = buckets.map(b =>
         allTypes.reduce((s, t) => s + (counts[b][t] || 0), 0)
     );
     const maxVal = Math.max(...bucketTotals, 1);
-
+ 
     const rawStep   = maxVal / 4;
     const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep || 1)));
     const tickStep  = Math.ceil(rawStep / magnitude) * magnitude || 1;
     const ticks     = [];
     for (let v = 0; v <= maxVal * 1.05; v += tickStep) ticks.push(v);
-
-    // ── Bar geometry ─────────────────────────────────────────────────────
+ 
     const groupW = cW / buckets.length;
     const barPad = Math.max(1, groupW * 0.12);
     const barW   = Math.max(2, groupW - barPad * 2);
-
-    // ── SVG content ──────────────────────────────────────────────────────
+ 
     let inner = '';
-
-    // Grid + Y labels
+ 
     ticks.forEach(tick => {
         const y = cH - (tick / maxVal) * cH;
         inner += `
@@ -473,14 +615,13 @@ export function updateTemporalChart() {
                 ${tick >= 1000 ? (tick/1000).toFixed(tick % 1000 === 0 ? 0 : 1)+'k' : tick}
             </text>`;
     });
-
-    // Bars + X labels
+ 
     const labelEvery = buckets.length > 16 ? 2 : 1;
-
+ 
     buckets.forEach((bucket, i) => {
         const x = i * groupW + barPad;
         let yOffset = 0;
-
+ 
         allTypes.forEach(type => {
             const val = counts[bucket][type] || 0;
             if (val === 0) return;
@@ -489,7 +630,7 @@ export function updateTemporalChart() {
             const color = typeColorMap[type];
             const safeLabel = bucket.replace(/'/g, "\\'");
             const safeType  = type.replace(/'/g, "\\'");
-
+ 
             inner += `
                 <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}"
                       width="${barW.toFixed(1)}" height="${bH.toFixed(1)}"
@@ -508,7 +649,7 @@ export function updateTemporalChart() {
                 />`;
             yOffset += bH;
         });
-
+ 
         if (i % labelEvery === 0) {
             inner += `
                 <text x="${(x + barW/2).toFixed(1)}" y="${(cH+16).toFixed(1)}"
@@ -519,12 +660,10 @@ export function updateTemporalChart() {
                 </text>`;
         }
     });
-
-    // Y axis spine
+ 
     inner += `<line x1="0" y1="0" x2="0" y2="${cH}"
                     stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
-
-    // Tooltip
+ 
     inner += `
         <foreignObject x="${cW - 240}" y="-8" width="240" height="60"
                        style="pointer-events:none; overflow:visible;">
@@ -539,8 +678,7 @@ export function updateTemporalChart() {
                 "></div>
             </div>
         </foreignObject>`;
-
-    // Legend
+ 
     if (allTypes.length > 1) {
         let lx = 0;
         let legendRow = '';
@@ -554,8 +692,87 @@ export function updateTemporalChart() {
         });
         inner += `<g transform="translate(0, ${cH+26})">${legendRow}</g>`;
     }
-
+ 
     svg.innerHTML = `<g transform="translate(${mL}, ${mT})">${inner}</g>`;
-}
+ 
+    const radius = getCurrentRadius();
 
+    const sparsityEl = document.getElementById('temporal-sparsity-warning');
+    if (sparsityEl) {
+        const totalFiltered = activeStation && radius !== null ? getFilteredCrimeTotal(activeStation.name, radius) : null;
+        const showWarning = ambientView === 'rate' && totalFiltered !== null && totalFiltered < 10;
+        sparsityEl.style.display = showWarning ? 'flex' : 'none';
+        if (showWarning) {
+            sparsityEl.innerHTML = `Only ${totalFiltered} incidents in this filter — the rate may not be statistically meaningful.`;
+        }
+    }
+
+    const bottomSvg = document.getElementById('ambient-chart-svg');
+    const aH = 90;
+
+    if (bottomSvg && activeStation && radius !== null) {
+        if (ambientView === 'population') {
+            const popData = getAmbientByBucket(activeStation.name, radius);
+            const vals = popData ? buckets.map(b => popData[b]).filter(v => v !== null) : [];
+            const maxVal2 = Math.max(...vals, 1);
+            const points = buckets.map((b, i) => {
+                const val = popData[b];
+                if (val === null) return null;
+                return { x: (i * groupW + groupW / 2).toFixed(1), y: (aH - (val / maxVal2) * aH).toFixed(1), val };
+            }).filter(p => p !== null);
+            const linePoints = points.map(p => `${p.x},${p.y}`).join(' ');
+            const dots = points.map(p => `
+                <circle cx="${p.x}" cy="${p.y}" r="8" fill="transparent" style="cursor:pointer;"
+                    onmouseover="var tt=document.getElementById('temporal-tooltip'); tt.innerHTML='${Math.round(p.val).toLocaleString()} people'; tt.style.display='block';"
+                    onmouseout="document.getElementById('temporal-tooltip').style.display='none';"/>
+                <circle cx="${p.x}" cy="${p.y}" r="3" fill="#10b981" pointer-events="none"/>`).join('');
+            bottomSvg.innerHTML = `<g transform="translate(${mL}, 4)">
+                <polygon points="0,${aH} ${linePoints} ${cW},${aH}" fill="#10b981" opacity="0.15"/>
+                <polyline points="${linePoints}" fill="none" stroke="#10b981" stroke-width="2"/>
+                ${dots}
+            </g>`;
+        } else {
+            const rateByType = getStationCERByType(activeStation.name, radius);
+            if (!rateByType) { bottomSvg.innerHTML = ''; }
+            else {
+                const types = Object.keys(rateByType);
+                let allVals = [];
+                types.forEach(t => { allVals.push(...buckets.map(b => rateByType[t][b]).filter(v => v !== null)); });
+                const maxVal2 = Math.max(...allVals, 0.01);
+
+                let linesHtml = '';
+                let legendHtml = '';
+                let lx = 0;
+
+                types.forEach((type, idx) => {
+                    const color = colorForType(type, idx);
+                    const points = buckets.map((b, i) => {
+                        const val = rateByType[type][b];
+                        if (val === null) return null;
+                        return { x: (i * groupW + groupW / 2).toFixed(1), y: (aH - (val / maxVal2) * aH).toFixed(1), val };
+                    }).filter(p => p !== null);
+                    if (points.length < 2) return;
+                    const linePoints = points.map(p => `${p.x},${p.y}`).join(' ');
+                    const safeType = type.replace(/'/g, "\\'");
+                    const dots = points.map(p => `
+                        <circle cx="${p.x}" cy="${p.y}" r="7" fill="transparent" style="cursor:pointer;"
+                            onmouseover="var tt=document.getElementById('temporal-tooltip'); tt.innerHTML='<b>${safeType}</b>: ${p.val.toFixed(2)} per 10k'; tt.style.display='block';"
+                            onmouseout="document.getElementById('temporal-tooltip').style.display='none';"/>
+                        <circle cx="${p.x}" cy="${p.y}" r="2.5" fill="${color}" pointer-events="none"/>`).join('');
+                    linesHtml += `<polyline points="${linePoints}" fill="none" stroke="${color}" stroke-width="2" opacity="0.9"/>${dots}`;
+
+                    legendHtml += `<rect x="${lx}" y="0" width="8" height="8" fill="${color}" rx="2"/>
+                        <text x="${lx+12}" y="8" fill="#94a3b8" font-size="9" font-family="Outfit, sans-serif">${type}</text>`;
+                    lx += Math.min(type.length * 5.5 + 20, 150);
+                });
+
+                bottomSvg.innerHTML = `<g transform="translate(${mL}, 20)">${linesHtml}</g>
+                    <g transform="translate(${mL}, 4)">${legendHtml}</g>`;
+            }
+        }
+    } else if (bottomSvg) {
+        bottomSvg.innerHTML = '';
+    }
+}
+ 
 window.updateTemporalChart = updateTemporalChart;

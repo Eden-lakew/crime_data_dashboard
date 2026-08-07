@@ -525,7 +525,8 @@ async function loadDatasets() {
         { key: 'parks', url: './public/data/parks.json' },
         { key: 'street_network', url: './public/data/street_network.geojson' },
         { key: 'blocks', url: './public/data/blocks.json' },
-        { key: 'tda_loops', url: './public/data/crime_loops.json' }
+        { key: 'tda_loops', url: './public/data/crime_loops.json' },
+        { key: 'cer', url: './public/data/cer_by_station.json' }
     ];
 
     let loaded = 0;
